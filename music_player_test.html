@@ -32,6 +32,7 @@
 <main>
   <header><h1>Sourwaters Music</h1><span id="connection" role="status"></span></header>
   <p id="page-address" style="margin: 0 0 8px; color: #d5b9ff; overflow-wrap: anywhere"></p>
+  <p id="orders" style="color:#d5b9ff">Заказы · v4: после открытия страницы покупок ещё не получено</p>
   <p id="relay" style="color:#d5b9ff">Оверлей: подключение…</p>
   <div id="screen"><span>Добавьте видео YouTube</span></div>
   <h2 id="track">Очередь пуста</h2>
@@ -274,10 +275,20 @@ bot = sourmusicConnect({
   onStatus:text=>{get('connection').textContent=text;},
   onReady:findRelay,
   onEvent:({event,data})=>{
-    if(event.source!=='Twitch'||event.type!=='RewardRedemption')return;
-    if(data?.reward?.title?.trim().toLowerCase()!==rewardTitle.toLowerCase())return;
-    if(data.redemptionId){if(seenOrders.has(data.redemptionId))return;seenOrders.add(data.redemptionId);if(seenOrders.size>500)seenOrders.delete(seenOrders.values().next().value);}
-    enqueue(data.userInput,data.user?.displayName||data.user?.name||data.user?.login||'Зритель');
+    if(String(event.source).toLowerCase()!=='twitch'||String(event.type).toLowerCase()!=='rewardredemption')return;
+    const name=String(data?.reward?.title ?? data?.rewardName ?? data?.rewardTitle ?? '').trim();
+    const input=String(data?.userInput ?? data?.rawInput ?? '').trim();
+    const normal=s=>s.normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
+    const note=message=>{get('orders').textContent='Заказы · v4 · '+new Date().toLocaleTimeString()+': '+message;};
+    if(normal(name)!==normal(rewardTitle)){note('Получена награда «'+name+'», ожидается «'+rewardTitle+'».');return;}
+    if(!input){note('Заказ получен, но поле ссылки пустое. Поля события: '+Object.keys(data||{}).join(', '));return;}
+    if(!videoId(input)){note('Заказ получен, но ссылка не распознана: '+input.slice(0,250));return;}
+    if(data.redemptionId && seenOrders.has(data.redemptionId)){note('Повтор того же заказа — уже обработан.');return;}
+    const user=data.user?.displayName||data.user?.name||data.user?.login||data.userName||(typeof data.user==='string'?data.user:'Зритель');
+    if(enqueue(input,user)){
+      if(data.redemptionId){seenOrders.add(data.redemptionId);if(seenOrders.size>500)seenOrders.delete(seenOrders.values().next().value);}
+      note('Добавлен трек '+videoId(input)+' · '+user);
+    }
   }
 });
 window.onYouTubeIframeAPIReady = () => {
