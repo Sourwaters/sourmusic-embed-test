@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sourwaters Music — оверлей</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #f9f5ff; font: 16px system-ui, sans-serif; }
+  .card { margin: 6px; max-width: 538px; height: 128px; display: flex; align-items: center; gap: 16px;
+    padding: 14px 18px; border: 1px solid #a171f8; border-left-width: 5px; border-radius: 18px;
+    background: linear-gradient(120deg, #251937, #151020); animation: enter .25s ease-out; }
+  .cover { width: 86px; height: 86px; flex: 0 0 auto; display: grid; place-items: center;
+    overflow: hidden; border-radius: 12px; background: #3c245f; color: #d7bbff; font-size: 32px; }
+  img { width: 100%; height: 100%; object-fit: cover; }
+  section { min-width: 0; }
+  #label { color: #c8a6ff; font-size: 11px; font-weight: 800; letter-spacing: .14em; }
+  h1 { margin: 5px 0; font-size: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  p { margin: 0; color: #e0d1ee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  [hidden] { display: none; }
+  @keyframes enter { from { opacity: 0; transform: translateY(5px); } }
+</style>
+<article class="card" id="card" hidden>
+  <div class="cover" id="cover">♫</div>
+  <section>
+    <div id="label"></div>
+    <h1 id="track"></h1>
+    <p id="viewer"></p>
+  </section>
+</article>
+<script src="sourmusic-connection.js?v=3"></script>
+<script>
+const get = id => document.getElementById(id);
+let previous = null;
+function show(label, title, user, id) {
+  get('label').textContent = label;
+  get('track').textContent = title;
+  get('viewer').textContent = 'Заказ от ' + user;
+  get('cover').textContent = '♫';
+  get('card').hidden = false;
+  if (!id) return;
+  const image = new Image();
+  image.alt = '';
+  const cover = get('cover');
+  image.onerror = () => {
+    if (cover.contains(image)) cover.textContent = '♫';
+  };
+  image.src = 'https://i.ytimg.com/vi/' + id + '/mqdefault.jpg';
+  cover.replaceChildren(image);
+}
+
+let bot;
+function display(track) {
+  if(track) {
+    if(JSON.stringify(track)!==JSON.stringify(previous))show('СЕЙЧАС ИГРАЕТ',track.title,track.user,track.id);
+  }else get('card').hidden=true;
+  previous=track;
+}
+let polling=false;
+async function refresh() {
+  if(polling)return;
+  polling=true;
+  try {
+    const result=await bot.request('GetGlobal',{variable:'sourmusic.nowPlaying',persisted:false});
+    display(sourmusicState(result.variable?.value));
+  }catch{display(null);}
+  finally{polling=false;}
+}
+if(new URLSearchParams(location.search).get('demo')==='1') {
+  show('СЕЙЧАС ИГРАЕТ','Laurena Frey — Everywhere','Соур');
+}else{
+  bot=sourmusicConnect({onReady:refresh,onStatus:text=>{
+    if(!text.startsWith('Streamer.bot подключён'))display(null);
+    document.title='SourMusic · '+text;
+  }});
+  setInterval(refresh,1000);
+}
+</script></html>

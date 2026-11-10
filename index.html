@@ -3,7 +3,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<title>Sourwaters Music — тестовый плеер</title>
+<title>Sourwaters Music</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 16px; background: #151020; color: #faf6ff; font: 15px system-ui, sans-serif; }
@@ -32,6 +32,7 @@
 <main>
   <header><h1>Sourwaters Music</h1><span id="connection" role="status"></span></header>
   <p id="page-address" style="margin: 0 0 8px; color: #d5b9ff; overflow-wrap: anywhere"></p>
+  <p id="relay" style="color:#d5b9ff">Оверлей: подключение…</p>
   <div id="screen"><span>Добавьте видео YouTube</span></div>
   <h2 id="track">Очередь пуста</h2>
   <p id="viewer"></p>
@@ -48,7 +49,34 @@
     <button type="button" id="next" disabled>Следующий</button>
   </form>
   <details open><summary id="count">В очереди (0)</summary><ol id="queue"></ol></details>
-</main>
+<details><summary>Настроить оверлей — один раз</summary>
+<p>В Streamer.bot на вкладке Actions создайте действие <b>SourMusic State</b> (включённое). В Sub-Actions добавьте Core → C# → Execute C# Code. Замените код этим, нажмите Compile, затем Save and Compile. Триггер не нужен.</p>
+<pre style="white-space:pre-wrap;user-select:text;background:#251937;padding:12px" id="relay-code">using System;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+public class CPHInline
+{
+    public bool Execute()
+    {
+        string value;
+        if (!CPH.TryGetArg&lt;string&gt;("sourmusicState", out value) ||
+            String.IsNullOrEmpty(value) || value.Length &gt; 4096) return false;
+        try
+        {
+            JObject state = JObject.Parse(value);
+            state["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            CPH.SetGlobalVar("sourmusic.nowPlaying", state.ToString(Formatting.None), false);
+            return true;
+        }
+        catch { return false; }
+    }
+}
+</pre>
+<p>В OBS добавьте источник «Браузер» с адресом <a style="color:#d5b9ff" href="music_overlay.html" target="_blank">оверлея</a>, размер 550 × 140. В док вставьте адрес этой страницы. Локальные файлы и start_music.cmd не нужны.</p>
+<p>Держите открытым один экземпляр плеера. Для заказов используйте награду Twitch «Заказать музыку» с обязательным вводом ссылки.</p>
+</details></main>
+<script src="sourmusic-connection.js?v=3"></script>
 <script>
 
 const ports = [8080, 8181];
@@ -73,68 +101,12 @@ function videoId(input) {
   }
 }
 
-function connectStreamerBot(onOrder, onStatus = () => {}) {
-  const seen = new Set();
-  function connect(index) {
-    const port = ports[index];
-    const requestId = 'sourwaters-music';
-    let subscribed = false;
-    let finished = false;
-    onStatus('Подключение к Streamer.bot · ' + port);
-    const socket = new WebSocket('ws://127.0.0.1:' + port + '/');
-    const timeout = setTimeout(retry, 3000);
-
-    function retry() {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      socket.close();
-      if (!subscribed && index === 0) {
-        connect(1);
-      } else {
-        onStatus('Streamer.bot недоступен · повтор через 3 с');
-        setTimeout(() => connect(0), 3000);
-      }
-    }
-
-    socket.onopen = () => socket.send(JSON.stringify({
-      request: 'Subscribe',
-      id: requestId,
-      events: { Twitch: ['RewardRedemption'] }
-    }));
-    socket.onerror = retry;
-    socket.onclose = retry;
-    socket.onmessage = ({ data: message }) => {
-      if (finished) return;
-      let packet;
-      try { packet = JSON.parse(message); } catch { return; }
-      if (packet?.id === requestId) {
-        if (packet.status !== 'ok') return retry();
-        subscribed = true;
-        clearTimeout(timeout);
-        onStatus('Streamer.bot подключён · ' + port);
-        return;
-      }
-      const { event, data } = packet ?? {};
-      if (event?.source !== 'Twitch' || event.type !== 'RewardRedemption') return;
-      if (data?.reward?.title?.trim().toLowerCase() !== rewardTitle.toLowerCase()) return;
-      if (data.redemptionId) {
-        if (seen.has(data.redemptionId)) return;
-        seen.add(data.redemptionId);
-        if (seen.size > 500) seen.delete(seen.values().next().value);
-      }
-      onOrder(data.userInput, data.user?.name || data.user?.login || 'Зритель');
-    };
-  }
-  connect(0);
-}
-
 const get = id => document.getElementById(id);
 const status = message => { get('status').textContent = message; };
 const privacyMode = new URLSearchParams(location.search).get('youtube') === 'privacy';
 const youtubeHost = privacyMode ? 'www.youtube-nocookie.com' : 'www.youtube.com';
 get('page-address').textContent = location.protocol === 'file:'
-  ? 'Открыт файл с диска. Запустите start_music.cmd и используйте адрес Player.'
+  ? 'Откройте плеер по ссылке GitHub Pages.'
   : 'Адрес плеера · ' + location.origin + location.pathname + ' · ' + youtubeHost;
 const queue = [];
 let current;
@@ -143,24 +115,27 @@ let apiReady = false;
 let apiFailed = false;
 let loadTimeout;
 let playing = null;
-let bridgeOrigin;
-function publishNowPlaying() {
-  if (bridgeOrigin) parent.postMessage({type:'sourmusic-state', track:playing}, bridgeOrigin);
+let bot, relayAction, publishing=false;
+const seenOrders = new Set();
+async function findRelay() {
+  if(!bot?.isConnected())return;
+  try {
+    const result=await bot.request('GetActions');
+    const matches=result.actions.filter(a=>a.name==='SourMusic State' && a.enabled);
+    relayAction=matches.length===1?matches[0].id:null;
+    get('relay').textContent=relayAction?'Оверлей: связь настроена':'Оверлей: добавьте действие SourMusic State — инструкция ниже';
+    if(relayAction)publishNowPlaying();
+  }catch{get('relay').textContent='Оверлей: нет связи со Streamer.bot';}
 }
-window.addEventListener('message', event => {
-  if (event.source !== parent) return;
-  let origin;
-  try { origin = new URL(event.origin); } catch { return; }
-  if (origin.hostname !== '127.0.0.1' || origin.protocol !== 'http:') return;
-  bridgeOrigin = event.origin;
-  if (event.data?.type === 'sourmusic-order') enqueue(event.data.url, event.data.user);
-  if (event.data?.type === 'sourmusic-connection') get('connection').textContent = event.data.text;
-  if (event.data?.type === 'sourmusic-ping') {
-    parent.postMessage({type:'sourmusic-ready'}, bridgeOrigin);
-    publishNowPlaying();
-  }
-});
-setInterval(publishNowPlaying, 2000);
+async function publishNowPlaying() {
+  if(!relayAction || !bot?.isConnected() || publishing)return;
+  publishing=true;
+  try {
+    await bot.request('DoAction',{action:{id:relayAction},args:{sourmusicState:JSON.stringify({at:Date.now(),track:playing})}});
+  }catch{relayAction=null;get('relay').textContent='Оверлей: передача не выполнена; проверьте действие SourMusic State';}
+  finally{publishing=false;}
+}
+setInterval(()=>{if(relayAction)publishNowPlaying();else findRelay();},2000);
 
 function render() {
   get('track').textContent = current?.title || 'Очередь пуста';
@@ -267,7 +242,7 @@ function start() {
         }
         if (event.data === 153) {
           status(location.protocol === 'file:'
-            ? 'YouTube 153 · используйте HTTP-адрес из строки Player в start_music.cmd.'
+            ? 'YouTube 153 · откройте плеер по ссылке GitHub Pages.'
             : 'YouTube 153 · откройте этот же адрес в Edge или Chrome для проверки.');
           return;
         }
@@ -295,7 +270,16 @@ get('add').addEventListener('submit', event => {
   if (enqueue(fields.video.value, fields.viewer.value.trim() || 'Тест')) fields.video.value = '';
 });
 get('next').addEventListener('click', next);
-get('connection').textContent = 'HTTPS · тест YouTube';
+bot = sourmusicConnect({
+  onStatus:text=>{get('connection').textContent=text;},
+  onReady:findRelay,
+  onEvent:({event,data})=>{
+    if(event.source!=='Twitch'||event.type!=='RewardRedemption')return;
+    if(data?.reward?.title?.trim().toLowerCase()!==rewardTitle.toLowerCase())return;
+    if(data.redemptionId){if(seenOrders.has(data.redemptionId))return;seenOrders.add(data.redemptionId);if(seenOrders.size>500)seenOrders.delete(seenOrders.values().next().value);}
+    enqueue(data.userInput,data.user?.displayName||data.user?.name||data.user?.login||'Зритель');
+  }
+});
 window.onYouTubeIframeAPIReady = () => {
   apiReady = true;
   if (current) start();
