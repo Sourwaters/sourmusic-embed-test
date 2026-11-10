@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Sourwaters Music — тестовый плеер</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: #151020; color: #faf6ff; font: 15px system-ui, sans-serif; }
+  main { max-width: 760px; margin: auto; }
+  header, form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  [hidden] { display: none !important; }
+  #manual a { color: #d5b9ff; }
+  header { justify-content: space-between; margin-bottom: 10px; }
+  h1 { font-size: 23px; margin: 0; }
+  #connection { color: #d5b9ff; }
+  #screen { background: #09060e; display: grid; place-items: center; height: clamp(200px, 48vh, 380px);
+    border: 1px solid #60468b; border-radius: 12px; overflow: hidden; }
+  #screen iframe { display: block; border: 0; width: 100%; height: 100%; }
+  #track { margin: 10px 0 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #viewer, #status { color: #e0d1ee; margin: 4px 0; }
+  #status { min-height: 20px; }
+  input, button { padding: 8px 10px; border: 1px solid #a171f8; border-radius: 7px; font: inherit; }
+  input { background: #251937; color: white; min-width: 110px; }
+  input[name="video"] { flex: 2; }
+  input[name="viewer"] { flex: 1; }
+  button { cursor: pointer; background: #a171f8; color: #150b23; font-weight: 700; }
+  button:disabled { opacity: .55; cursor: default; }
+  ol { margin: 5px 0 0; padding-left: 24px; max-height: 95px; overflow: auto; }
+  details { margin-top: 8px; }
+</style>
+<main>
+  <header><h1>Sourwaters Music</h1><span id="connection" role="status"></span></header>
+  <p id="page-address" style="margin: 0 0 8px; color: #d5b9ff; overflow-wrap: anywhere"></p>
+  <div id="screen"><span>Добавьте видео YouTube</span></div>
+  <h2 id="track">Очередь пуста</h2>
+  <p id="viewer"></p>
+  <p id="status" role="status"></p>
+  <form id="manual" hidden>
+    <a id="watch" target="_blank" rel="noopener noreferrer">Открыть на YouTube</a>
+    <input id="manual-title" aria-label="Название трека для оверлея" placeholder="Название трека" maxlength="200" required>
+    <button id="manual-start">Уже играет · показать в оверлее</button>
+  </form>
+  <form id="add">
+    <input name="video" aria-label="Ссылка YouTube" placeholder="Ссылка YouTube" value="https://www.youtube.com/watch?v=q7y2Q61t7qc" required>
+    <input name="viewer" aria-label="Ник заказавшего" placeholder="Ник заказавшего" maxlength="60">
+    <button>Добавить</button>
+    <button type="button" id="next" disabled>Следующий</button>
+  </form>
+  <details open><summary id="count">В очереди (0)</summary><ol id="queue"></ol></details>
+</main>
+<script>
+
+const ports = [8080, 8181];
+const rewardTitle = 'Заказать музыку';
+const videoIdPattern = /^[\w-]{11}$/;
+function videoId(input) {
+  const value = String(input ?? '').trim();
+  if (videoIdPattern.test(value)) return value;
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol)) return null;
+    const [route, part] = url.pathname.split('/').filter(Boolean);
+    let id;
+    if (url.hostname === 'youtu.be') id = route;
+    if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'].includes(url.hostname)) {
+      if (route === 'watch') id = url.searchParams.get('v');
+      if (['shorts', 'live', 'embed'].includes(route)) id = part;
+    }
+    return id && videoIdPattern.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function connectStreamerBot(onOrder, onStatus = () => {}) {
+  const seen = new Set();
+  function connect(index) {
+    const port = ports[index];
+    const requestId = 'sourwaters-music';
+    let subscribed = false;
+    let finished = false;
+    onStatus('Подключение к Streamer.bot · ' + port);
+    const socket = new WebSocket('ws://127.0.0.1:' + port + '/');
+    const timeout = setTimeout(retry, 3000);
+
+    function retry() {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      socket.close();
+      if (!subscribed && index === 0) {
+        connect(1);
+      } else {
+        onStatus('Streamer.bot недоступен · повтор через 3 с');
+        setTimeout(() => connect(0), 3000);
+      }
+    }
+
+    socket.onopen = () => socket.send(JSON.stringify({
+      request: 'Subscribe',
+      id: requestId,
+      events: { Twitch: ['RewardRedemption'] }
+    }));
+    socket.onerror = retry;
+    socket.onclose = retry;
+    socket.onmessage = ({ data: message }) => {
+      if (finished) return;
+      let packet;
+      try { packet = JSON.parse(message); } catch { return; }
+      if (packet?.id === requestId) {
+        if (packet.status !== 'ok') return retry();
+        subscribed = true;
+        clearTimeout(timeout);
+        onStatus('Streamer.bot подключён · ' + port);
+        return;
+      }
+      const { event, data } = packet ?? {};
+      if (event?.source !== 'Twitch' || event.type !== 'RewardRedemption') return;
+      if (data?.reward?.title?.trim().toLowerCase() !== rewardTitle.toLowerCase()) return;
+      if (data.redemptionId) {
+        if (seen.has(data.redemptionId)) return;
+        seen.add(data.redemptionId);
+        if (seen.size > 500) seen.delete(seen.values().next().value);
+      }
+      onOrder(data.userInput, data.user?.name || data.user?.login || 'Зритель');
+    };
+  }
+  connect(0);
+}
+
+const get = id => document.getElementById(id);
+const status = message => { get('status').textContent = message; };
+const privacyMode = new URLSearchParams(location.search).get('youtube') === 'privacy';
+const youtubeHost = privacyMode ? 'www.youtube-nocookie.com' : 'www.youtube.com';
+get('page-address').textContent = location.protocol === 'file:'
+  ? 'Открыт файл с диска. Запустите start_music.cmd и используйте адрес Player.'
+  : 'Адрес плеера · ' + location.origin + location.pathname + ' · ' + youtubeHost;
+const queue = [];
+let current;
+let player;
+let apiReady = false;
+let apiFailed = false;
+let loadTimeout;
+let playing = null;
+function publishNowPlaying() {}
+
+function render() {
+  get('track').textContent = current?.title || 'Очередь пуста';
+  get('viewer').textContent = current ? 'Заказ от ' + current.user : '';
+  get('count').textContent = 'В очереди (' + queue.length + ')';
+  get('next').disabled = !current && !queue.length;
+  get('queue').replaceChildren(...queue.map(track => {
+    const item = document.createElement('li');
+    item.textContent = track.title + ' · ' + track.user;
+    return item;
+  }));
+}
+
+function enqueue(input, user) {
+  const id = videoId(input);
+  if (!id) {
+    status('Введите ссылку на отдельное видео YouTube.');
+    return false;
+  }
+  const track = { id, title: 'Видео YouTube · ' + id, user };
+  queue.push(track);
+  if (!current) next();
+  else render();
+  return true;
+}
+
+function next() {
+  get('manual').hidden = true;
+  playing = null;
+  publishNowPlaying();
+  clearTimeout(loadTimeout);
+  const oldPlayer = player;
+  player = null;
+  if (oldPlayer) oldPlayer.destroy();
+  current = queue.shift();
+  get('screen').textContent = 'Добавьте видео YouTube';
+  render();
+  if (!current) {
+    status('');
+    return;
+  }
+  start();
+}
+
+function start() {
+  if (!apiReady) {
+    status(apiFailed ? 'Не удалось загрузить YouTube. Проверьте интернет и обновите страницу.'
+      : 'Загрузка YouTube…');
+    return;
+  }
+  const track = current;
+  const frame = document.createElement('iframe');
+  const params = new URLSearchParams({ enablejsapi: '1', playsinline: '1', autoplay: '1' });
+  if (location.protocol !== 'file:') params.set('origin', location.origin);
+  frame.src = 'https://' + youtubeHost + '/embed/' + track.id + '?' + params;
+  frame.title = 'Плеер YouTube';
+  frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen';
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  get('screen').replaceChildren(frame);
+  status('Загрузка видео…');
+  loadTimeout = setTimeout(() => {
+    status('Видео не загрузилось. Попробуйте нажать ▶ или выберите «Следующий».');
+  }, 12000);
+  player = new YT.Player(frame, {
+    events: {
+      onReady(event) {
+        if (current !== track) return;
+        event.target.playVideo();
+      },
+      onStateChange(event) {
+        if (current !== track) return;
+        if (event.data === YT.PlayerState.ENDED) return next();
+        if (event.data === YT.PlayerState.PLAYING) {
+          clearTimeout(loadTimeout);
+          const title = event.target.getVideoData?.()?.title;
+          if (title) track.title = title;
+          playing = track;
+          publishNowPlaying();
+          status('');
+          render();
+        } else if (event.data === YT.PlayerState.PAUSED && playing === track) {
+          playing = null;
+          publishNowPlaying();
+        }
+      },
+      onAutoplayBlocked() {
+        if (current !== track) return;
+        clearTimeout(loadTimeout);
+        status('Автозапуск заблокирован. Нажмите ▶ в плеере.');
+      },
+      onError(event) {
+        if (current !== track) return;
+        clearTimeout(loadTimeout);
+        playing = null;
+        publishNowPlaying();
+        if ([101, 150].includes(event.data)) {
+          get('watch').href = 'https://www.youtube.com/watch?v=' + track.id;
+          get('manual-title').value = event.target?.getVideoData?.()?.title || '';
+          get('manual-start').disabled = false;
+          get('manual').hidden = false;
+          status('YouTube ' + event.data + ' · запустите видео на YouTube или нажмите «Следующий».');
+          return;
+        }
+        if (event.data === 153) {
+          status(location.protocol === 'file:'
+            ? 'YouTube 153 · используйте HTTP-адрес из строки Player в start_music.cmd.'
+            : 'YouTube 153 · откройте этот же адрес в Edge или Chrome для проверки.');
+          return;
+        }
+        status('YouTube не воспроизводит это видео (' + event.data + '). Нажмите «Следующий».');
+      }
+    }
+  });
+}
+
+get('manual').addEventListener('submit', event => {
+  event.preventDefault();
+  const title = get('manual-title').value.trim();
+  if (get('manual').hidden || !current || !title) return;
+  current.title = title;
+  playing = current;
+  publishNowPlaying();
+  render();
+  status('Ручное воспроизведение · после окончания нажмите «Следующий».');
+  get('manual').hidden = true;
+});
+
+get('add').addEventListener('submit', event => {
+  event.preventDefault();
+  const fields = event.currentTarget.elements;
+  if (enqueue(fields.video.value, fields.viewer.value.trim() || 'Тест')) fields.video.value = '';
+});
+get('next').addEventListener('click', next);
+get('connection').textContent = 'HTTPS · тест YouTube';
+window.onYouTubeIframeAPIReady = () => {
+  apiReady = true;
+  if (current) start();
+};
+const api = document.createElement('script');
+api.src = 'https://www.youtube.com/iframe_api';
+api.onerror = () => {
+  apiFailed = true;
+  status('Не удалось загрузить YouTube. Проверьте интернет и обновите страницу.');
+};
+document.head.append(api);
+</script>
+</html>
+
+
+
+
+
+
