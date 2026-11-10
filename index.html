@@ -42,7 +42,7 @@
     <button id="manual-start">Уже играет · показать в оверлее</button>
   </form>
   <form id="add">
-    <input name="video" aria-label="Ссылка YouTube" placeholder="Ссылка YouTube" value="https://www.youtube.com/watch?v=q7y2Q61t7qc" required>
+    <input name="video" aria-label="Ссылка YouTube" placeholder="Ссылка YouTube" required>
     <input name="viewer" aria-label="Ник заказавшего" placeholder="Ник заказавшего" maxlength="60">
     <button>Добавить</button>
     <button type="button" id="next" disabled>Следующий</button>
@@ -143,7 +143,24 @@ let apiReady = false;
 let apiFailed = false;
 let loadTimeout;
 let playing = null;
-function publishNowPlaying() {}
+let bridgeOrigin;
+function publishNowPlaying() {
+  if (bridgeOrigin) parent.postMessage({type:'sourmusic-state', track:playing}, bridgeOrigin);
+}
+window.addEventListener('message', event => {
+  if (event.source !== parent) return;
+  let origin;
+  try { origin = new URL(event.origin); } catch { return; }
+  if (origin.hostname !== '127.0.0.1' || origin.protocol !== 'http:') return;
+  bridgeOrigin = event.origin;
+  if (event.data?.type === 'sourmusic-order') enqueue(event.data.url, event.data.user);
+  if (event.data?.type === 'sourmusic-connection') get('connection').textContent = event.data.text;
+  if (event.data?.type === 'sourmusic-ping') {
+    parent.postMessage({type:'sourmusic-ready'}, bridgeOrigin);
+    publishNowPlaying();
+  }
+});
+setInterval(publishNowPlaying, 2000);
 
 function render() {
   get('track').textContent = current?.title || 'Очередь пуста';
@@ -292,6 +309,7 @@ api.onerror = () => {
 document.head.append(api);
 </script>
 </html>
+
 
 
 
