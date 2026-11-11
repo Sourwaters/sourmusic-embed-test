@@ -28,11 +28,21 @@
   button:disabled { opacity: .55; cursor: default; }
   ol { margin: 5px 0 0; padding-left: 24px; max-height: 95px; overflow: auto; }
   details { margin-top: 8px; }
+#page-address,#role-label,#orders,#relay {display:none}
+#connection {font-size:13px;display:flex;align-items:center;gap:7px}
+#connection::before {content:'';width:8px;height:8px;border-radius:50%;background:#e1ae58}
+#connection[data-ready="true"]::before {background:#6ee7a2}
+#status:empty {display:none} #status {min-height:0}
+#viewer {margin-bottom:16px}
+.copy-actions {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:20px}
+.copy-actions button {display:flex;justify-content:space-between;align-items:center;gap:8px;background:#251937;color:#e0d1ee;text-align:left;font-size:13px}
+.copy-actions svg {flex-shrink:0}
+#stop {min-width:42px;font-size:18px;line-height:20px}
 </style>
 <main>
   <header><h1>Sourwaters Music</h1><span id="connection" role="status"></span></header>
   <p id="page-address" style="margin: 0 0 8px; color: #d5b9ff; overflow-wrap: anywhere"></p>
-  <p id="role-label" style="color:#d5b9ff"></p><p id="orders" style="color:#d5b9ff">Заказы · v8: после открытия страницы покупок ещё не получено</p>
+  <p id="role-label" style="color:#d5b9ff"></p><p id="orders" style="color:#d5b9ff">Заказы · v9: после открытия страницы покупок ещё не получено</p>
   <p id="relay" style="color:#d5b9ff">Оверлей: подключение…</p>
   <div id="screen"><span>Добавьте видео YouTube</span></div>
   <h2 id="track">Очередь пуста</h2>
@@ -47,12 +57,11 @@
     <input name="video" aria-label="Ссылка YouTube" placeholder="Ссылка YouTube" required>
     <input name="viewer" aria-label="Ник заказавшего" placeholder="Ник заказавшего" maxlength="60">
     <button id="add-button">Добавить</button>
-    <button type="button" id="next" disabled>Следующий</button><button type="button" id="stop" disabled>Стоп</button><button type="button" id="resume" disabled>Продолжить</button>
+    <button type="button" id="next" disabled>Следующий</button><button type="button" id="stop" disabled aria-label="Воспроизвести">▶</button>
   </form>
   <details open><summary id="count">В очереди (0)</summary><ol id="queue"></ol></details>
-<div style="display:flex;align-items:center;gap:8px;margin-top:16px">Код для Streamer.bot <button id="copy-code" type="button" title="Скопировать код" aria-label="Скопировать код для Streamer.bot" style="display:grid;place-items:center;padding:7px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button><span id="copy-result" role="status"></span></div><textarea id="copy-fallback" aria-label="Код для ручного копирования" readonly hidden style="width:100%;height:160px"></textarea>
-<p style="font-size:13px;color:#d5b9ff"><a style="color:inherit" href="?role=source&v=8" target="_blank">Источник OBS</a> · <a style="color:inherit" href="?role=control&v=8" target="_blank">Док управления</a> · <a style="color:inherit" href="music_overlay.html?v=8" target="_blank">Оверлей</a></p></main>
-<script src="sourmusic-connection.js?v=8"></script>
+<div class="copy-actions"><button type="button" id="copy-source" aria-label="Скопировать: Источник OBS">Источник OBS<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button><button type="button" id="copy-dock" aria-label="Скопировать: Док управления">Док управления<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button><button type="button" id="copy-overlay" aria-label="Скопировать: Оверлей">Оверлей<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button><button type="button" id="copy-code" aria-label="Скопировать: Код для Streamer.bot">Код для Streamer.bot<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button></div><p id="copy-result" role="status"></p><textarea id="copy-fallback" aria-label="Для ручного копирования" readonly hidden style="width:100%;height:100px"></textarea></main>
+<script src="sourmusic-connection.js?v=9"></script>
 <script>
 
 const ports = [8080, 8181];
@@ -99,8 +108,10 @@ const acknowledgements = [];
 let remoteState = null, commandPending = null, polling = false;
 let bot, relayAction, publishing = false, publishDirty = false;
 const seenOrders = new Set();
-get('role-label').textContent = controlMode ? 'Док · управление источником OBS · v8' : 'Источник · воспроизведение · v8';
-if(controlMode) get('screen').textContent = 'Музыка воспроизводится в браузерном источнике OBS';
+get('role-label').textContent = controlMode ? 'Док · управление источником OBS · v9' : 'Источник · воспроизведение · v9';
+if(controlMode) get('screen').hidden=true;
+function connectionIndicator(ready){get('connection').textContent=ready?'Подключено':'Подключение…';get('connection').setAttribute('data-ready',String(ready));}
+function playbackButton(active){get('stop').textContent=active?'❚❚':'▶';get('stop').setAttribute('aria-label',active?'Пауза':'Воспроизвести');get('stop').title=active?'Пауза':'Воспроизвести';}
 
 function readState(value) {
   try {
@@ -120,7 +131,7 @@ async function findRelay() {
   } catch {get('relay').textContent='Нет связи со Streamer.bot';}
 }
 function snapshot() {
-  return {version:8,session:playerSession,at:Date.now(),track:playing,current:current||null,queue,
+  return {version:9,session:playerSession,at:Date.now(),track:playing,current:current||null,queue,
     playback:playing?'playing':current?'stopped':'idle',status:get('status').textContent,
     order:get('orders').textContent,acks:acknowledgements.slice(-20)};
 }
@@ -139,14 +150,15 @@ async function publishNowPlaying() {
 }
 function renderRemote() {
   const s=remoteState;
-  get('track').textContent=s?.current?.title||'Ожидание источника OBS';
+  get('track').textContent=s?.current?.title||(s?'Очередь пуста':'Ожидание источника OBS');
   get('viewer').textContent=s?.current?'Заказ от '+s.current.user:'';
   get('count').textContent='В очереди ('+(s?.queue?.length||0)+')';
   get('queue').replaceChildren(...(s?.queue||[]).map(t=>{const li=document.createElement('li');li.textContent=t.title+' · '+t.user;return li;}));
   const enabled=!!s && !!relayAction && !commandPending;
   get('next').disabled=!enabled || (!s.current && !s.queue.length);
   get('stop').disabled=!enabled || !s.current;
-  get('resume').disabled=!enabled || !s.current;
+  playbackButton(s?.playback==='playing');
+  connectionIndicator(!!s && !!relayAction && bot?.isConnected());
   get('add-button').disabled=!enabled;
   get('orders').textContent=s?.order || 'Заказы принимает браузерный источник, а не док';
   get('relay').textContent=s?'Источник OBS подключён · '+(s.playback==='playing'?'играет':s.playback==='stopped'?'остановлен':'очередь пуста'):'Источник OBS не найден. Откройте ссылку источника в активной сцене.';
@@ -154,9 +166,10 @@ function renderRemote() {
 function stopTrack() {
   stoppedByUser=true;
   clearTimeout(loadTimeout);
-  if(player?.stopVideo)player.stopVideo();
+  if(player?.pauseVideo)player.pauseVideo();
   playing=null;
-  status('Остановлено');
+  status('');
+  render();
   publishNowPlaying();
 }
 function resumeTrack() {
@@ -173,7 +186,7 @@ async function pollSync() {
       remoteState=readState(sourmusicGlobal(result,'sourmusic.nowPlaying'));
       if(commandPending) {
         const ack=remoteState?.acks?.find(a=>a.id===commandPending.id);
-        if(ack){status(ack.ok?'Команда выполнена':ack.message);commandPending=null;}
+        if(ack){status(ack.ok?'':ack.message);commandPending=null;}
         else if(Date.now()-commandPending.sentAt>10000){status('Нет подтверждения команды. Обновите C# код SourMusic State и проверьте источник.');commandPending=null;}
       }
       renderRemote();
@@ -191,7 +204,7 @@ async function pollSync() {
         if(command.type==='next')next();
         else if(command.type==='stop')stopTrack();
         else if(command.type==='play')resumeTrack();
-        else if(command.type==='add')ok=enqueue(command.url,command.user||'Тест');
+        else if(command.type==='add')ok=enqueue(command.url,command.user||'Sour');
         else ok=false;
         acknowledgements.push({id:command.id,ok,message:ok?'':'Не удалось выполнить команду'});
         if(acknowledgements.length>20)acknowledgements.shift();
@@ -231,7 +244,7 @@ async function resolveTitle(track){
 function render() {
   if(controlMode){renderRemote();return;}
   get('stop').disabled=!current;
-  get('resume').disabled=!current;
+  playbackButton(!!playing);
   get('track').textContent = current?.title || 'Очередь пуста';
   get('viewer').textContent = current ? 'Заказ от ' + current.user : '';
   get('count').textContent = 'В очереди (' + queue.length + ')';
@@ -317,6 +330,7 @@ function start() {
           render();
         } else if (event.data === YT.PlayerState.PAUSED && playing === track) {
           playing = null;
+          render();
           publishNowPlaying();
         }
       },
@@ -365,16 +379,15 @@ get('manual').addEventListener('submit', event => {
 get('add').addEventListener('submit', async event => {
   event.preventDefault();
   const fields = event.currentTarget.elements;
-  const url=fields.video.value,user=fields.viewer.value.trim()||'Тест';
+  const url=fields.video.value,user=fields.viewer.value.trim()||'Sour';
   if(!videoId(url)){status('Введите ссылку на отдельное видео YouTube');return;}
   const added=controlMode?await sendCommand('add',{url,user}):enqueue(url,user);
   if(added)fields.video.value='';
 });
 get('next').addEventListener('click',()=>controlMode?sendCommand('next'):next());
-get('stop').addEventListener('click',()=>controlMode?sendCommand('stop'):stopTrack());
-get('resume').addEventListener('click',()=>controlMode?sendCommand('play'):resumeTrack());
+get('stop').addEventListener('click',()=>{if(controlMode)sendCommand(remoteState?.playback==='playing'?'stop':'play');else if(playing)stopTrack();else resumeTrack();});
 bot = sourmusicConnect({
-  onStatus:text=>{get('connection').textContent=text;},
+  onStatus:text=>{connectionIndicator(!controlMode && text.startsWith('Streamer.bot подключён'));if(controlMode&&!text.startsWith('Streamer.bot подключён')){remoteState=null;renderRemote();}},
   onReady:()=>{findRelay();pollSync();},
   onEvent:({event,data})=>{
     if(controlMode)return;
@@ -382,7 +395,7 @@ bot = sourmusicConnect({
     const name=String(data?.reward?.title ?? data?.rewardName ?? data?.rewardTitle ?? '').trim();
     const input=String(data?.user_input ?? data?.userInput ?? data?.rawInput ?? '').trim();
     const normal=s=>s.normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
-    const note=message=>{get('orders').textContent='Заказы · v8 · '+new Date().toLocaleTimeString()+': '+message;publishNowPlaying();};
+    const note=message=>{get('orders').textContent='Заказы · v9 · '+new Date().toLocaleTimeString()+': '+message;publishNowPlaying();};
     if(normal(name)!==normal(rewardTitle)){note('Получена награда «'+name+'», ожидается «'+rewardTitle+'».');return;}
     if(!input){note('Заказ получен, но поле ссылки пустое. Поля события: '+Object.keys(data||{}).join(', '));return;}
     if(!videoId(input)){note('Заказ получен, но ссылка не распознана: '+input.slice(0,250));return;}
@@ -409,16 +422,11 @@ api.onerror = () => {
 document.head.append(api);
 }
 const codeForStreamerBot="using System;\nusing Newtonsoft.Json;\nusing Newtonsoft.Json.Linq;\n\npublic class CPHInline\n{\n    private static readonly object Gate = new object();\n    public bool Execute()\n    {\n        lock (Gate)\n        {\n            try\n            {\n                string value;\n                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();\n                if (CPH.TryGetArg<string>(\"sourmusicCommand\", out value))\n                {\n                    if (String.IsNullOrEmpty(value) || value.Length > 4096) return false;\n                    JObject command = JObject.Parse(value);\n                    string type = (string)command[\"type\"];\n                    if (type != \"next\" && type != \"stop\" && type != \"play\" && type != \"add\") return false;\n                    if (String.IsNullOrEmpty((string)command[\"id\"]) || String.IsNullOrEmpty((string)command[\"session\"])) return false;\n                    command[\"at\"] = now;\n                    string saved = CPH.GetGlobalVar<string>(\"sourmusic.commands\", false);\n                    JArray commands = String.IsNullOrEmpty(saved) ? new JArray() : JArray.Parse(saved);\n                    foreach (JToken item in commands) if ((string)item[\"id\"] == (string)command[\"id\"]) return true;\n                    commands.Add(command);\n                    while (commands.Count > 64) commands.RemoveAt(0);\n                    CPH.SetGlobalVar(\"sourmusic.commands\", commands.ToString(Formatting.None), false);\n                    return true;\n                }\n                if (!CPH.TryGetArg<string>(\"sourmusicState\", out value) || String.IsNullOrEmpty(value) || value.Length > 65536) return false;\n                JObject state = JObject.Parse(value);\n                state[\"at\"] = now;\n                CPH.SetGlobalVar(\"sourmusic.nowPlaying\", state.ToString(Formatting.None), false);\n                return true;\n            }\n            catch { return false; }\n        }\n    }\n}\n";
-get('copy-code').addEventListener('click',async()=>{
-  try{await navigator.clipboard.writeText(codeForStreamerBot);get('copy-result').textContent='Скопировано';get('copy-fallback').hidden=true;}
-  catch{const field=get('copy-fallback');field.value=codeForStreamerBot;field.hidden=false;field.focus();field.select();get('copy-result').textContent='Нажмите Ctrl+C';}
-});
-</script>
-</html>
-
-
-
-
-
-
-
+async function copyValue(value){
+ try{await navigator.clipboard.writeText(value);get('copy-result').textContent='Скопировано';get('copy-fallback').hidden=true;}
+ catch{const field=get('copy-fallback');field.value=value;field.hidden=false;field.focus();field.select();get('copy-result').textContent='Нажмите Ctrl+C';}
+}
+const baseUrl=new URL('./',location.href);
+for(const [id,path] of [['copy-source','?role=source&v=9'],['copy-dock','?role=control&v=9'],['copy-overlay','music_overlay.html?v=9']])get(id).addEventListener('click',()=>copyValue(new URL(path,baseUrl).href));
+get('copy-code').addEventListener('click',()=>copyValue(codeForStreamerBot));
+</script></html>
