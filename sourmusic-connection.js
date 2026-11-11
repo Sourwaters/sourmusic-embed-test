@@ -78,7 +78,7 @@ function sourmusicConnect({onStatus = () => {}, onReady = () => {}, onEvent = ()
 function sourmusicState(value, now=Date.now()) {
   try {
     const state=typeof value==='string'?JSON.parse(value):value;
-    if(!state || !Number.isFinite(state.at) || now-state.at>10000 || state.at-now>3000)return null;
+    if(!state || !Number.isFinite(state.at) || now-state.at>45000 || state.at-now>3000)return null;
     const t=state.track;
     return t && /^[\w-]{11}$/.test(t.id) && typeof t.title==='string' && typeof t.user==='string'
       ? {id:t.id,title:t.title.slice(0,200),user:t.user.slice(0,80)} : null;

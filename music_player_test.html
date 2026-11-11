@@ -32,7 +32,7 @@
 <main>
   <header><h1>Sourwaters Music</h1><span id="connection" role="status"></span></header>
   <p id="page-address" style="margin: 0 0 8px; color: #d5b9ff; overflow-wrap: anywhere"></p>
-  <p id="orders" style="color:#d5b9ff">Заказы · v5: после открытия страницы покупок ещё не получено</p>
+  <p id="role-label" style="color:#d5b9ff"></p><p id="orders" style="color:#d5b9ff">Заказы · v7: после открытия страницы покупок ещё не получено</p>
   <p id="relay" style="color:#d5b9ff">Оверлей: подключение…</p>
   <div id="screen"><span>Добавьте видео YouTube</span></div>
   <h2 id="track">Очередь пуста</h2>
@@ -46,38 +46,13 @@
   <form id="add">
     <input name="video" aria-label="Ссылка YouTube" placeholder="Ссылка YouTube" required>
     <input name="viewer" aria-label="Ник заказавшего" placeholder="Ник заказавшего" maxlength="60">
-    <button>Добавить</button>
-    <button type="button" id="next" disabled>Следующий</button>
+    <button id="add-button">Добавить</button>
+    <button type="button" id="next" disabled>Следующий</button><button type="button" id="stop" disabled>Стоп</button><button type="button" id="resume" disabled>Продолжить</button>
   </form>
   <details open><summary id="count">В очереди (0)</summary><ol id="queue"></ol></details>
-<details><summary>Настроить оверлей — один раз</summary>
-<p>В Streamer.bot на вкладке Actions создайте действие <b>SourMusic State</b> (включённое). В Sub-Actions добавьте Core → C# → Execute C# Code. Замените код этим, нажмите Compile, затем Save and Compile. Триггер не нужен.</p>
-<pre style="white-space:pre-wrap;user-select:text;background:#251937;padding:12px" id="relay-code">using System;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-
-public class CPHInline
-{
-    public bool Execute()
-    {
-        string value;
-        if (!CPH.TryGetArg&lt;string&gt;("sourmusicState", out value) ||
-            String.IsNullOrEmpty(value) || value.Length &gt; 4096) return false;
-        try
-        {
-            JObject state = JObject.Parse(value);
-            state["at"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            CPH.SetGlobalVar("sourmusic.nowPlaying", state.ToString(Formatting.None), false);
-            return true;
-        }
-        catch { return false; }
-    }
-}
-</pre>
-<p>В OBS добавьте источник «Браузер» с адресом <a style="color:#d5b9ff" href="music_overlay.html" target="_blank">оверлея</a>, размер 550 × 140. В док вставьте адрес этой страницы. Локальные файлы и start_music.cmd не нужны.</p>
-<p>Держите открытым один экземпляр плеера. Для заказов используйте награду Twitch «Заказать музыку» с обязательным вводом ссылки.</p>
-</details></main>
-<script src="sourmusic-connection.js?v=3"></script>
+<div style="display:flex;align-items:center;gap:8px;margin-top:16px">Код для Streamer.bot <button id="copy-code" type="button" title="Скопировать код" aria-label="Скопировать код для Streamer.bot" style="display:grid;place-items:center;padding:7px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button><span id="copy-result" role="status"></span></div><textarea id="copy-fallback" aria-label="Код для ручного копирования" readonly hidden style="width:100%;height:160px"></textarea>
+<p style="font-size:13px;color:#d5b9ff"><a style="color:inherit" href="?role=source&v=7" target="_blank">Источник OBS</a> · <a style="color:inherit" href="?role=control&v=7" target="_blank">Док управления</a> · <a style="color:inherit" href="music_overlay.html?v=7" target="_blank">Оверлей</a></p></main>
+<script src="sourmusic-connection.js?v=7"></script>
 <script>
 
 const ports = [8080, 8181];
@@ -116,29 +91,147 @@ let apiReady = false;
 let apiFailed = false;
 let loadTimeout;
 let playing = null;
-let bot, relayAction, publishing=false;
+let stoppedByUser=false;
+const controlMode = new URLSearchParams(location.search).get('role') === 'control';
+const playerSession = crypto.randomUUID();
+const seenCommands = new Set();
+const acknowledgements = [];
+let remoteState = null, commandPending = null, polling = false;
+let bot, relayAction, publishing = false, publishDirty = false;
 const seenOrders = new Set();
+get('role-label').textContent = controlMode ? 'Док · управление источником OBS · v7' : 'Источник · воспроизведение · v7';
+if(controlMode) get('screen').textContent = 'Музыка воспроизводится в браузерном источнике OBS';
+
+function readState(value) {
+  try {
+    const s = typeof value === 'string' ? JSON.parse(value) : value;
+    if(!s || typeof s.session !== 'string' || !Array.isArray(s.queue) || !Number.isFinite(s.at) || Math.abs(Date.now()-s.at)>45000)return null;
+    return s;
+  } catch { return null; }
+}
 async function findRelay() {
   if(!bot?.isConnected())return;
   try {
     const result=await bot.request('GetActions');
     const matches=result.actions.filter(a=>a.name==='SourMusic State' && a.enabled);
     relayAction=matches.length===1?matches[0].id:null;
-    get('relay').textContent=relayAction?'Оверлей: связь настроена':'Оверлей: добавьте действие SourMusic State — инструкция ниже';
-    if(relayAction)publishNowPlaying();
-  }catch{get('relay').textContent='Оверлей: нет связи со Streamer.bot';}
+    get('relay').textContent=relayAction?'Streamer.bot: действие найдено':'Добавьте действие SourMusic State с кодом из кнопки копирования';
+    if(!controlMode && relayAction)publishNowPlaying();
+  } catch {get('relay').textContent='Нет связи со Streamer.bot';}
+}
+function snapshot() {
+  return {version:7,session:playerSession,at:Date.now(),track:playing,current:current||null,queue,
+    playback:playing?'playing':current?'stopped':'idle',status:get('status').textContent,
+    order:get('orders').textContent,acks:acknowledgements.slice(-20)};
 }
 async function publishNowPlaying() {
+  if(controlMode)return;
+  publishDirty=true;
   if(!relayAction || !bot?.isConnected() || publishing)return;
   publishing=true;
   try {
-    await bot.request('DoAction',{action:{id:relayAction},args:{sourmusicState:JSON.stringify({at:Date.now(),track:playing})}});
-  }catch{relayAction=null;get('relay').textContent='Оверлей: передача не выполнена; проверьте действие SourMusic State';}
-  finally{publishing=false;}
+    while(publishDirty){
+      publishDirty=false;
+      await bot.request('DoAction',{action:{id:relayAction},args:{sourmusicState:JSON.stringify(snapshot())}});
+    }
+  } catch {relayAction=null;get('relay').textContent='Передача не выполнена: проверьте SourMusic State';}
+  finally {publishing=false;}
 }
-setInterval(()=>{if(relayAction)publishNowPlaying();else findRelay();},2000);
+function renderRemote() {
+  const s=remoteState;
+  get('track').textContent=s?.current?.title||'Ожидание источника OBS';
+  get('viewer').textContent=s?.current?'Заказ от '+s.current.user:'';
+  get('count').textContent='В очереди ('+(s?.queue?.length||0)+')';
+  get('queue').replaceChildren(...(s?.queue||[]).map(t=>{const li=document.createElement('li');li.textContent=t.title+' · '+t.user;return li;}));
+  const enabled=!!s && !!relayAction && !commandPending;
+  get('next').disabled=!enabled || (!s.current && !s.queue.length);
+  get('stop').disabled=!enabled || !s.current;
+  get('resume').disabled=!enabled || !s.current;
+  get('add-button').disabled=!enabled;
+  get('orders').textContent=s?.order || 'Заказы принимает браузерный источник, а не док';
+  get('relay').textContent=s?'Источник OBS подключён · '+(s.playback==='playing'?'играет':s.playback==='stopped'?'остановлен':'очередь пуста'):'Источник OBS не найден. Откройте ссылку источника в активной сцене.';
+}
+function stopTrack() {
+  stoppedByUser=true;
+  clearTimeout(loadTimeout);
+  if(player?.stopVideo)player.stopVideo();
+  playing=null;
+  status('Остановлено');
+  publishNowPlaying();
+}
+function resumeTrack() {
+  stoppedByUser=false;
+  if(player?.playVideo){player.playVideo();status('Запуск…');}
+  else if(current)start();
+}
+async function pollSync() {
+  if(polling || !bot?.isConnected())return;
+  polling=true;
+  try {
+    if(controlMode) {
+      const result=await bot.request('GetGlobal',{variable:'sourmusic.nowPlaying',persisted:false});
+      remoteState=readState(result.variable?.value ?? result.value);
+      if(commandPending) {
+        const ack=remoteState?.acks?.find(a=>a.id===commandPending.id);
+        if(ack){status(ack.ok?'Команда выполнена':ack.message);commandPending=null;}
+        else if(Date.now()-commandPending.sentAt>10000){status('Нет подтверждения команды. Обновите C# код SourMusic State и проверьте источник.');commandPending=null;}
+      }
+      renderRemote();
+    } else {
+      const result=await bot.request('GetGlobal',{variable:'sourmusic.commands',persisted:false});
+      const raw=result.variable?.value ?? result.value;
+      const commands=typeof raw==='string'?JSON.parse(raw):raw;
+      if(!Array.isArray(commands))return;
+      for(const command of commands) {
+        if(command.session!==playerSession || !command.id || seenCommands.has(command.id))continue;
+        seenCommands.add(command.id);
+        if(seenCommands.size>256)seenCommands.delete(seenCommands.values().next().value);
+        if(!Number.isFinite(command.at)||Math.abs(Date.now()-command.at)>15000)continue;
+        let ok=true;
+        if(command.type==='next')next();
+        else if(command.type==='stop')stopTrack();
+        else if(command.type==='play')resumeTrack();
+        else if(command.type==='add')ok=enqueue(command.url,command.user||'Тест');
+        else ok=false;
+        acknowledgements.push({id:command.id,ok,message:ok?'':'Не удалось выполнить команду'});
+        if(acknowledgements.length>20)acknowledgements.shift();
+        publishNowPlaying();
+      }
+    }
+  } catch {
+    if(controlMode){remoteState=null;renderRemote();if(commandPending && Date.now()-commandPending.sentAt>10000){status('Нет связи с источником');commandPending=null;}}
+  } finally {polling=false;}
+}
+async function sendCommand(type, args={}) {
+  if(!remoteState || !relayAction || commandPending){status('Дождитесь подключения источника OBS');return false;}
+  const id=crypto.randomUUID();
+  commandPending={id,sentAt:Date.now()};renderRemote();status('Отправка команды…');
+  try {
+    await bot.request('DoAction',{action:{id:relayAction},args:{sourmusicCommand:JSON.stringify({id,session:remoteState.session,type,...args})}});
+    return true;
+  }catch{commandPending=null;status('Не удалось отправить команду');renderRemote();return false;}
+}
+setInterval(pollSync,1000);
+setInterval(()=>{if(!relayAction)findRelay();else if(!controlMode)publishNowPlaying();},15000);
+if(controlMode)renderRemote();
 
+const titleCache=new Map();
+async function resolveTitle(track){
+  if(!titleCache.has(track.id))titleCache.set(track.id,(async()=>{
+    const url=encodeURIComponent('https://www.youtube.com/watch?v='+track.id);
+    for(const prefix of ['https://www.youtube.com/oembed?format=json&url=','https://noembed.com/embed?url=']){
+      try{const response=await fetch(prefix+url,{signal:AbortSignal.timeout(7000)});if(!response.ok)continue;const data=await response.json();if(typeof data.title==='string'&&data.title.trim())return data.title.trim().slice(0,250);}catch{}
+    }return null;
+  })());
+  const title=await titleCache.get(track.id);
+  if(title)track.title=title;
+  else{titleCache.delete(track.id);if(track.title==='Загрузка названия…')track.title='Название недоступно · '+track.id;}
+  render();
+}
 function render() {
+  if(controlMode){renderRemote();return;}
+  get('stop').disabled=!current;
+  get('resume').disabled=!current;
   get('track').textContent = current?.title || 'Очередь пуста';
   get('viewer').textContent = current ? 'Заказ от ' + current.user : '';
   get('count').textContent = 'В очереди (' + queue.length + ')';
@@ -148,6 +241,7 @@ function render() {
     item.textContent = track.title + ' · ' + track.user;
     return item;
   }));
+  publishNowPlaying();
 }
 
 function enqueue(input, user) {
@@ -156,14 +250,17 @@ function enqueue(input, user) {
     status('Введите ссылку на отдельное видео YouTube.');
     return false;
   }
-  const track = { id, title: 'Видео YouTube · ' + id, user };
+  if(queue.length>=100){status('В очереди уже 100 треков');return false;}
+  const track = { id, title: 'Загрузка названия…', user:String(user||'Зритель').slice(0,80) };
   queue.push(track);
+  resolveTitle(track);
   if (!current) next();
   else render();
   return true;
 }
 
 function next() {
+  stoppedByUser=false;
   get('manual').hidden = true;
   playing = null;
   publishNowPlaying();
@@ -209,7 +306,7 @@ function start() {
       },
       onStateChange(event) {
         if (current !== track) return;
-        if (event.data === YT.PlayerState.ENDED) return next();
+        if (event.data === YT.PlayerState.ENDED) { if(!stoppedByUser)next(); return; }
         if (event.data === YT.PlayerState.PLAYING) {
           clearTimeout(loadTimeout);
           const title = event.target.getVideoData?.()?.title;
@@ -265,21 +362,27 @@ get('manual').addEventListener('submit', event => {
   get('manual').hidden = true;
 });
 
-get('add').addEventListener('submit', event => {
+get('add').addEventListener('submit', async event => {
   event.preventDefault();
   const fields = event.currentTarget.elements;
-  if (enqueue(fields.video.value, fields.viewer.value.trim() || 'Тест')) fields.video.value = '';
+  const url=fields.video.value,user=fields.viewer.value.trim()||'Тест';
+  if(!videoId(url)){status('Введите ссылку на отдельное видео YouTube');return;}
+  const added=controlMode?await sendCommand('add',{url,user}):enqueue(url,user);
+  if(added)fields.video.value='';
 });
-get('next').addEventListener('click', next);
+get('next').addEventListener('click',()=>controlMode?sendCommand('next'):next());
+get('stop').addEventListener('click',()=>controlMode?sendCommand('stop'):stopTrack());
+get('resume').addEventListener('click',()=>controlMode?sendCommand('play'):resumeTrack());
 bot = sourmusicConnect({
   onStatus:text=>{get('connection').textContent=text;},
-  onReady:findRelay,
+  onReady:()=>{findRelay();pollSync();},
   onEvent:({event,data})=>{
+    if(controlMode)return;
     if(String(event.source).toLowerCase()!=='twitch'||String(event.type).toLowerCase()!=='rewardredemption')return;
     const name=String(data?.reward?.title ?? data?.rewardName ?? data?.rewardTitle ?? '').trim();
     const input=String(data?.user_input ?? data?.userInput ?? data?.rawInput ?? '').trim();
     const normal=s=>s.normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
-    const note=message=>{get('orders').textContent='Заказы · v5 · '+new Date().toLocaleTimeString()+': '+message;};
+    const note=message=>{get('orders').textContent='Заказы · v7 · '+new Date().toLocaleTimeString()+': '+message;publishNowPlaying();};
     if(normal(name)!==normal(rewardTitle)){note('Получена награда «'+name+'», ожидается «'+rewardTitle+'».');return;}
     if(!input){note('Заказ получен, но поле ссылки пустое. Поля события: '+Object.keys(data||{}).join(', '));return;}
     if(!videoId(input)){note('Заказ получен, но ссылка не распознана: '+input.slice(0,250));return;}
@@ -296,6 +399,7 @@ window.onYouTubeIframeAPIReady = () => {
   apiReady = true;
   if (current) start();
 };
+if(!controlMode){
 const api = document.createElement('script');
 api.src = 'https://www.youtube.com/iframe_api';
 api.onerror = () => {
@@ -303,6 +407,12 @@ api.onerror = () => {
   status('Не удалось загрузить YouTube. Проверьте интернет и обновите страницу.');
 };
 document.head.append(api);
+}
+const codeForStreamerBot="using System;\nusing Newtonsoft.Json;\nusing Newtonsoft.Json.Linq;\n\npublic class CPHInline\n{\n    private static readonly object Gate = new object();\n    public bool Execute()\n    {\n        lock (Gate)\n        {\n            try\n            {\n                string value;\n                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();\n                if (CPH.TryGetArg<string>(\"sourmusicCommand\", out value))\n                {\n                    if (String.IsNullOrEmpty(value) || value.Length > 4096) return false;\n                    JObject command = JObject.Parse(value);\n                    string type = (string)command[\"type\"];\n                    if (type != \"next\" && type != \"stop\" && type != \"play\" && type != \"add\") return false;\n                    if (String.IsNullOrEmpty((string)command[\"id\"]) || String.IsNullOrEmpty((string)command[\"session\"])) return false;\n                    command[\"at\"] = now;\n                    string saved = CPH.GetGlobalVar<string>(\"sourmusic.commands\", false);\n                    JArray commands = String.IsNullOrEmpty(saved) ? new JArray() : JArray.Parse(saved);\n                    foreach (JToken item in commands) if ((string)item[\"id\"] == (string)command[\"id\"]) return true;\n                    commands.Add(command);\n                    while (commands.Count > 64) commands.RemoveAt(0);\n                    CPH.SetGlobalVar(\"sourmusic.commands\", commands.ToString(Formatting.None), false);\n                    return true;\n                }\n                if (!CPH.TryGetArg<string>(\"sourmusicState\", out value) || String.IsNullOrEmpty(value) || value.Length > 65536) return false;\n                JObject state = JObject.Parse(value);\n                state[\"at\"] = now;\n                CPH.SetGlobalVar(\"sourmusic.nowPlaying\", state.ToString(Formatting.None), false);\n                return true;\n            }\n            catch { return false; }\n        }\n    }\n}\n";
+get('copy-code').addEventListener('click',async()=>{
+  try{await navigator.clipboard.writeText(codeForStreamerBot);get('copy-result').textContent='Скопировано';get('copy-fallback').hidden=true;}
+  catch{const field=get('copy-fallback');field.value=codeForStreamerBot;field.hidden=false;field.focus();field.select();get('copy-result').textContent='Нажмите Ctrl+C';}
+});
 </script>
 </html>
 
