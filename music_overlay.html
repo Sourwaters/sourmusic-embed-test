@@ -27,7 +27,7 @@
     <p id="viewer"></p>
   </section>
 </article>
-<script src="sourmusic-connection.js?v=7"></script>
+<script src="sourmusic-connection.js?v=8"></script>
 <script>
 const get = id => document.getElementById(id);
 let previous = null;
@@ -61,7 +61,7 @@ async function refresh() {
   polling=true;
   try {
     const result=await bot.request('GetGlobal',{variable:'sourmusic.nowPlaying',persisted:false});
-    display(sourmusicState(result.variable?.value));
+    display(sourmusicState(sourmusicGlobal(result,'sourmusic.nowPlaying')));
   }catch{display(null);}
   finally{polling=false;}
 }

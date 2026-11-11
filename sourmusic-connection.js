@@ -84,3 +84,7 @@ function sourmusicState(value, now=Date.now()) {
       ? {id:t.id,title:t.title.slice(0,200),user:t.user.slice(0,80)} : null;
   }catch{return null;}
 }
+
+function sourmusicGlobal(result, name) {
+  return result.variables?.[name]?.value ?? result.variable?.value ?? result.value;
+}

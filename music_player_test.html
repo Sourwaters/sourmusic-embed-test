@@ -32,7 +32,7 @@
 <main>
   <header><h1>Sourwaters Music</h1><span id="connection" role="status"></span></header>
   <p id="page-address" style="margin: 0 0 8px; color: #d5b9ff; overflow-wrap: anywhere"></p>
-  <p id="role-label" style="color:#d5b9ff"></p><p id="orders" style="color:#d5b9ff">Заказы · v7: после открытия страницы покупок ещё не получено</p>
+  <p id="role-label" style="color:#d5b9ff"></p><p id="orders" style="color:#d5b9ff">Заказы · v8: после открытия страницы покупок ещё не получено</p>
   <p id="relay" style="color:#d5b9ff">Оверлей: подключение…</p>
   <div id="screen"><span>Добавьте видео YouTube</span></div>
   <h2 id="track">Очередь пуста</h2>
@@ -51,12 +51,12 @@
   </form>
   <details open><summary id="count">В очереди (0)</summary><ol id="queue"></ol></details>
 <div style="display:flex;align-items:center;gap:8px;margin-top:16px">Код для Streamer.bot <button id="copy-code" type="button" title="Скопировать код" aria-label="Скопировать код для Streamer.bot" style="display:grid;place-items:center;padding:7px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4H3v13h5"/></svg></button><span id="copy-result" role="status"></span></div><textarea id="copy-fallback" aria-label="Код для ручного копирования" readonly hidden style="width:100%;height:160px"></textarea>
-<p style="font-size:13px;color:#d5b9ff"><a style="color:inherit" href="?role=source&v=7" target="_blank">Источник OBS</a> · <a style="color:inherit" href="?role=control&v=7" target="_blank">Док управления</a> · <a style="color:inherit" href="music_overlay.html?v=7" target="_blank">Оверлей</a></p></main>
-<script src="sourmusic-connection.js?v=7"></script>
+<p style="font-size:13px;color:#d5b9ff"><a style="color:inherit" href="?role=source&v=8" target="_blank">Источник OBS</a> · <a style="color:inherit" href="?role=control&v=8" target="_blank">Док управления</a> · <a style="color:inherit" href="music_overlay.html?v=8" target="_blank">Оверлей</a></p></main>
+<script src="sourmusic-connection.js?v=8"></script>
 <script>
 
 const ports = [8080, 8181];
-const rewardTitle = 'Заказать музыку';
+const rewardTitle = 'Заказ музыки SourMusic';
 const videoIdPattern = /^[\w-]{11}$/;
 function videoId(input) {
   const value = String(input ?? '').trim();
@@ -99,7 +99,7 @@ const acknowledgements = [];
 let remoteState = null, commandPending = null, polling = false;
 let bot, relayAction, publishing = false, publishDirty = false;
 const seenOrders = new Set();
-get('role-label').textContent = controlMode ? 'Док · управление источником OBS · v7' : 'Источник · воспроизведение · v7';
+get('role-label').textContent = controlMode ? 'Док · управление источником OBS · v8' : 'Источник · воспроизведение · v8';
 if(controlMode) get('screen').textContent = 'Музыка воспроизводится в браузерном источнике OBS';
 
 function readState(value) {
@@ -120,7 +120,7 @@ async function findRelay() {
   } catch {get('relay').textContent='Нет связи со Streamer.bot';}
 }
 function snapshot() {
-  return {version:7,session:playerSession,at:Date.now(),track:playing,current:current||null,queue,
+  return {version:8,session:playerSession,at:Date.now(),track:playing,current:current||null,queue,
     playback:playing?'playing':current?'stopped':'idle',status:get('status').textContent,
     order:get('orders').textContent,acks:acknowledgements.slice(-20)};
 }
@@ -170,7 +170,7 @@ async function pollSync() {
   try {
     if(controlMode) {
       const result=await bot.request('GetGlobal',{variable:'sourmusic.nowPlaying',persisted:false});
-      remoteState=readState(result.variable?.value ?? result.value);
+      remoteState=readState(sourmusicGlobal(result,'sourmusic.nowPlaying'));
       if(commandPending) {
         const ack=remoteState?.acks?.find(a=>a.id===commandPending.id);
         if(ack){status(ack.ok?'Команда выполнена':ack.message);commandPending=null;}
@@ -179,7 +179,7 @@ async function pollSync() {
       renderRemote();
     } else {
       const result=await bot.request('GetGlobal',{variable:'sourmusic.commands',persisted:false});
-      const raw=result.variable?.value ?? result.value;
+      const raw=sourmusicGlobal(result,'sourmusic.commands');
       const commands=typeof raw==='string'?JSON.parse(raw):raw;
       if(!Array.isArray(commands))return;
       for(const command of commands) {
@@ -382,7 +382,7 @@ bot = sourmusicConnect({
     const name=String(data?.reward?.title ?? data?.rewardName ?? data?.rewardTitle ?? '').trim();
     const input=String(data?.user_input ?? data?.userInput ?? data?.rawInput ?? '').trim();
     const normal=s=>s.normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase();
-    const note=message=>{get('orders').textContent='Заказы · v7 · '+new Date().toLocaleTimeString()+': '+message;publishNowPlaying();};
+    const note=message=>{get('orders').textContent='Заказы · v8 · '+new Date().toLocaleTimeString()+': '+message;publishNowPlaying();};
     if(normal(name)!==normal(rewardTitle)){note('Получена награда «'+name+'», ожидается «'+rewardTitle+'».');return;}
     if(!input){note('Заказ получен, но поле ссылки пустое. Поля события: '+Object.keys(data||{}).join(', '));return;}
     if(!videoId(input)){note('Заказ получен, но ссылка не распознана: '+input.slice(0,250));return;}

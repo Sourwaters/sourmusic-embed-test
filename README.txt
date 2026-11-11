@@ -1,29 +1,29 @@
-Sourwaters Music v7 — источник OBS и отдельный док управления
+Sourwaters Music v8 — источник OBS и отдельный док управления
 
 1. В существующем действии Streamer.bot «SourMusic State» замените весь
    C# код содержимым SourMusic-State.cs (или кнопкой «Код для Streamer.bot»
    в плеере). Compile → Save and Compile. Второе действие создавать не нужно.
 
 2. Браузерный источник OBS, в котором играет музыка:
-https://sourwaters.github.io/sourmusic-embed-test/?role=source&v=7
+https://sourwaters.github.io/sourmusic-embed-test/?role=source&v=8
 В его свойствах включите «Управлять звуком через OBS».
 Если музыка нужна при смене сцен, выключите завершение работы источника
 при скрытии. Не включайте обновление страницы при активации сцены:
 перезагрузка очищает очередь. Используйте один экземпляр источника.
 
 3. Док-панель управления:
-https://sourwaters.github.io/sourmusic-embed-test/?role=control&v=7
+https://sourwaters.github.io/sourmusic-embed-test/?role=control&v=8
 В ней музыки нет. Текущий трек и очередь читаются из источника через
 Streamer.bot. Кнопки отправляют команду источнику и ждут подтверждения.
 Стоп останавливает текущий трек; Продолжить снова запускает его.
 Следующий переключает источник на следующий заказ.
 
 4. Оверлей (отдельный источник, 550 × 140):
-https://sourwaters.github.io/sourmusic-embed-test/music_overlay.html?v=7
+https://sourwaters.github.io/sourmusic-embed-test/music_overlay.html?v=8
 Он показывает фактически играющий трек. Если источник закрыт,
 карточка исчезнет не позднее примерно 45 секунд.
 
-5. Награда Twitch: «Заказать музыку», обязательный ввод ссылки YouTube.
+5. Награда Twitch: «Заказ музыки SourMusic», обязательный ввод ссылки YouTube.
 Заказы принимает только источник, док их повторно не добавляет.
 Streamer.bot должен быть запущен. Порты: сначала 8080, затем 8181.
 
